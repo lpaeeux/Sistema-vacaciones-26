@@ -135,32 +135,47 @@
 // ========================================
 const apiService = {
   async callBackend(action, data = {}) {
-    try {
-      // Método simple: parámetros en URL
-      const params = new URLSearchParams({ action, ...data });
-      const url = `${BACKEND_URL}?${params}`;
+  return new Promise((resolve, reject) => {
+    // Crear un ID único para el callback
+    const callbackName = 'callback_' + Math.round(100000 * Math.random());
+    
+    // Agregar el callback a los parámetros
+    const params = new URLSearchParams({
+      action: action,
+      callback: callbackName,
+      ...data
+    });
+    
+    const url = `${BACKEND_URL}?${params}`;
+    
+    // Crear script tag para JSONP
+    const script = document.createElement('script');
+    script.src = url;
+    
+    // Definir la función de callback global
+    window[callbackName] = (response) => {
+      // Limpiar
+      delete window[callbackName];
+      document.body.removeChild(script);
       
-      console.log('📡 Llamando a:', url);
-      
-      const response = await fetch(url);
-      
-      if (!response.ok) {
-        throw new Error(`Error HTTP: ${response.status}`);
-      }
-      
-      const result = await response.json();
-      
-      if (result.success) {
-        return result.data;
+      if (response && response.success) {
+        resolve(response.data);
       } else {
-        throw new Error(result.error || 'Error del servidor');
+        reject(new Error(response?.error || 'Error del servidor'));
       }
-    } catch (error) {
-      console.error('❌ Error conexión:', error);
-      // Modo demo como fallback
-      return this.getDemoData(action, data);
-    }
-  },
+    };
+    
+    // Manejar errores
+    script.onerror = () => {
+      delete window[callbackName];
+      document.body.removeChild(script);
+      reject(new Error('Error de conexión con el servidor'));
+    };
+    
+    // Ejecutar la petición
+    document.body.appendChild(script);
+  });
+},
 
   getDemoData(action, data) {
     console.log('🔄 Usando modo demo para:', action);
