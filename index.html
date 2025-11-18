@@ -102,53 +102,34 @@
     const { useState, useEffect, useCallback, useRef } = React;
 
     const CONFIG = {
-      GOOGLE_SHEETS_URL: 'https://script.google.com/macros/s/AKfycbzkYqrEdNQAKfOC7DkNNga_qmRD4QUpwKzxVyXk6x-IAXAojWPmVK_MjNDrgb87vuk3/exec',
+      GOOGLE_SHEETS_URL: 'https://script.google.com/macros/s/AKfycbxaH-v2QVaf0S6OepJoG6icPGpc6NkfId5L_WTq1w2u6N3wSKqvW1coUfftLJlmJQti/exec',
       SYNC_INTERVAL: 30000,
-      CACHE_DURATION: 5000,
       MAX_RETRIES: 3,
       RETRY_DELAY: 2000
     };
 
+    // ===================== SERVICIO API CON MÉTODO GET (evita CORS) =====================
     class APIService {
       constructor() {
         this.cache = new Map();
-        this.pendingRequests = new Map();
         this.lastSync = null;
       }
 
       async request(action, data = {}, retries = 0) {
-        const cacheKey = `${action}-${JSON.stringify(data)}`;
-        
-        if (this.cache.has(cacheKey)) {
-          const cached = this.cache.get(cacheKey);
-          if (Date.now() - cached.timestamp < CONFIG.CACHE_DURATION) {
-            return cached.data;
-          }
-        }
-
-        if (this.pendingRequests.has(cacheKey)) {
-          return this.pendingRequests.get(cacheKey);
-        }
-
-        const requestPromise = this._executeRequest(action, data, retries, cacheKey);
-        this.pendingRequests.set(cacheKey, requestPromise);
-
         try {
-          const result = await requestPromise;
-          this.pendingRequests.delete(cacheKey);
-          return result;
-        } catch (error) {
-          this.pendingRequests.delete(cacheKey);
-          throw error;
-        }
-      }
-
-      async _executeRequest(action, data, retries, cacheKey) {
-        try {
-          const response = await fetch(CONFIG.GOOGLE_SHEETS_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action, ...data })
+          // Construir URL con parámetros GET
+          const params = new URLSearchParams({
+            action: action,
+            ...data
+          });
+          
+          const url = `${CONFIG.GOOGLE_SHEETS_URL}?${params.toString()}`;
+          
+          console.log('📡 Petición:', url);
+          
+          const response = await fetch(url, {
+            method: 'GET',
+            redirect: 'follow'
           });
 
           if (!response.ok) {
@@ -156,23 +137,20 @@
           }
 
           const result = await response.json();
+          console.log('✅ Respuesta:', result);
 
           if (result.error) {
             throw new Error(result.error);
           }
 
-          this.cache.set(cacheKey, {
-            data: result,
-            timestamp: Date.now()
-          });
-
           this.lastSync = new Date();
           return result;
 
         } catch (error) {
-          console.error(`Error en ${action}:`, error);
+          console.error(`❌ Error en ${action}:`, error);
 
           if (retries < CONFIG.MAX_RETRIES) {
+            console.log(`🔄 Reintento ${retries + 1}/${CONFIG.MAX_RETRIES}`);
             await new Promise(resolve => setTimeout(resolve, CONFIG.RETRY_DELAY * (retries + 1)));
             return this.request(action, data, retries + 1);
           }
@@ -184,18 +162,11 @@
       clearCache() {
         this.cache.clear();
       }
-
-      invalidateCache(pattern) {
-        for (const key of this.cache.keys()) {
-          if (key.includes(pattern)) {
-            this.cache.delete(key);
-          }
-        }
-      }
     }
 
     const apiService = new APIService();
 
+    // ===================== TOAST =====================
     const ToastContainer = ({ toasts, removeToast }) => {
       return (
         <div className="toast-container">
@@ -238,6 +209,7 @@
       return { toasts, addToast, removeToast };
     };
 
+    // ===================== CONEXIÓN =====================
     const ConnectionIndicator = ({ status, lastSync }) => {
       const getStatusConfig = () => {
         switch (status) {
@@ -245,10 +217,8 @@
             return { className: 'connection-online', dotClass: 'dot-online', text: 'Conectado' };
           case 'syncing':
             return { className: 'connection-syncing', dotClass: 'dot-syncing', text: 'Sincronizando...' };
-          case 'offline':
-            return { className: 'connection-offline', dotClass: 'dot-offline', text: 'Sin conexión' };
           default:
-            return { className: 'connection-offline', dotClass: 'dot-offline', text: 'Desconectado' };
+            return { className: 'connection-offline', dotClass: 'dot-offline', text: 'Sin conexión' };
         }
       };
 
@@ -267,6 +237,7 @@
       );
     };
 
+    // ===================== LOGIN =====================
     const PantallaLogin = ({ onLogin, connectionStatus }) => {
       const [staffId, setStaffId] = useState('');
       const [password, setPassword] = useState('');
@@ -279,16 +250,18 @@
         setCargando(true);
 
         try {
+          console.log('🔐 Intentando login:', staffId);
           const result = await apiService.request('login', { staffId, password });
           
           if (result.success) {
+            console.log('✅ Login exitoso');
             onLogin(staffId, result.empleado);
           } else {
             setError(result.message || 'Credenciales incorrectas');
           }
         } catch (err) {
-          setError(`Error de conexión: ${err.message}`);
-          console.error('Error en login:', err);
+          console.error('❌ Error login:', err);
+          setError(`Error: ${err.message}`);
         } finally {
           setCargando(false);
         }
@@ -342,8 +315,8 @@
 
               <button
                 type="submit"
-                disabled={cargando || connectionStatus === 'offline'}
-                className="w-full bg-gradient-to-r from-purple-600 to-blue-600 text-white py-4 rounded-xl font-bold text-lg hover:from-purple-700 hover:to-blue-700 transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={cargando}
+                className="w-full bg-gradient-to-r from-purple-600 to-blue-600 text-white py-4 rounded-xl font-bold text-lg hover:from-purple-700 hover:to-blue-700 transition-all shadow-lg disabled:opacity-50"
               >
                 {cargando ? (
                   <div className="flex items-center justify-center gap-3">
@@ -361,11 +334,16 @@
               <p>Tu Staff ID / (sin password)</p>
               <p>Admin: JEFE / admin2026</p>
             </div>
+
+            <div className="mt-4 text-xs text-gray-500 text-center">
+              <p>💡 Abre consola (F12) para ver logs de conexión</p>
+            </div>
           </div>
         </div>
       );
     };
 
+    // ===================== MAIN =====================
     function SistemaVacaciones() {
       const [mostrarLogin, setMostrarLogin] = useState(true);
       const [usuarioActual, setUsuarioActual] = useState(null);
@@ -376,7 +354,6 @@
       const [cargandoDatos, setCargandoDatos] = useState(false);
       
       const { toasts, addToast, removeToast } = useToast();
-      const syncIntervalRef = useRef(null);
 
       useEffect(() => {
         verificarConexion();
@@ -400,7 +377,6 @@
         setEmpleadoData(empleado);
         setMostrarLogin(false);
         cargarDatos();
-        iniciarSincronizacion();
         addToast(`Bienvenido, ${empleado.nombre}`, 'success');
       };
 
@@ -420,17 +396,6 @@
           setCargandoDatos(false);
         }
       };
-
-      const iniciarSincronizacion = () => {
-        if (syncIntervalRef.current) clearInterval(syncIntervalRef.current);
-        syncIntervalRef.current = setInterval(cargarDatos, CONFIG.SYNC_INTERVAL);
-      };
-
-      useEffect(() => {
-        return () => {
-          if (syncIntervalRef.current) clearInterval(syncIntervalRef.current);
-        };
-      }, []);
 
       if (mostrarLogin) {
         return <PantallaLogin onLogin={handleLogin} connectionStatus={connectionStatus} />;
@@ -470,7 +435,6 @@
                   <button
                     onClick={() => {
                       if (confirm('¿Cerrar sesión?')) {
-                        if (syncIntervalRef.current) clearInterval(syncIntervalRef.current);
                         setMostrarLogin(true);
                         setUsuarioActual(null);
                         setDatos(null);
@@ -490,34 +454,27 @@
             <div className="bg-white rounded-2xl shadow-lg p-8">
               <div className="text-center">
                 <h2 className="text-3xl font-bold text-gray-800 mb-6">
-                  🎉 ¡Sistema Conectado!
+                  🎉 ¡Conectado! (Método GET)
                 </h2>
                 
                 <div className="max-w-2xl mx-auto text-left space-y-4">
                   <div className="bg-green-50 border-2 border-green-200 rounded-xl p-4">
                     <h3 className="font-bold text-green-800 mb-2">✅ Sesión activa</h3>
                     <p className="text-green-700 text-sm">
-                      <strong>{empleadoData.nombre}</strong> | Staff {usuarioActual} | Grupo {empleadoData.grupo} | {empleadoData.puntos} pts
+                      <strong>{empleadoData.nombre}</strong> | Staff {usuarioActual} | Grupo {empleadoData.grupo}
                     </p>
                   </div>
 
                   <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-4">
-                    <h3 className="font-bold text-blue-800 mb-2">📊 Datos sincronizados</h3>
+                    <h3 className="font-bold text-blue-800 mb-2">📊 Datos</h3>
                     <p className="text-blue-700 text-sm">
                       Empleados: {datos.empleados.length} | Períodos A: {datos.periodosA.length} | Períodos B: {datos.periodosB.length}
-                    </p>
-                  </div>
-
-                  <div className="bg-purple-50 border-2 border-purple-200 rounded-xl p-4">
-                    <h3 className="font-bold text-purple-800 mb-2">🚀 Sistema operativo</h3>
-                    <p className="text-purple-700 text-sm">
-                      Conexión: <strong className="text-green-600">Activa</strong> | Sync automático cada 30s
                     </p>
                   </div>
                 </div>
 
                 <button
-                  onClick={() => { cargarDatos(); addToast('Datos recargados', 'info'); }}
+                  onClick={() => { cargarDatos(); addToast('Recargado', 'info'); }}
                   className="mt-6 bg-gradient-to-r from-blue-600 to-purple-600 text-white px-8 py-3 rounded-xl font-bold"
                 >
                   🔄 Recargar
